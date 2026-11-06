@@ -11,11 +11,13 @@ import {
   HiOutlineDocumentText,
   HiOutlineCheck,
   HiOutlineUpload,
-  HiOutlinePaperClip
+  HiOutlinePaperClip,
+  HiOutlineUserGroup
 } from 'react-icons/hi';
 import { toast } from 'react-toastify';
 import { FilePicker } from '../common/FilePicker';
 import { isValidEmail, isValidPhone } from '../../utils/validation';
+import { companyAdminService } from '../../services/companyAdminService';
 
 export const LeadModal = ({ isOpen, onClose, onSave, lead = null, mode = 'create' }) => {
   if (!isOpen) return null;
@@ -40,7 +42,11 @@ export const LeadModal = ({ isOpen, onClose, onSave, lead = null, mode = 'create
     source: 'Website',
     campaignName: '',
     referenceName: '',
+    agentId: '',
     agentName: '',
+    referredByCustomerId: '',
+    referredByCustomerName: '',
+    referredByCustomerPhone: '',
 
     // 3. Property Requirements
     interestedIn: 'Plot / Land',
@@ -82,6 +88,21 @@ export const LeadModal = ({ isOpen, onClose, onSave, lead = null, mode = 'create
 
   const [formData, setFormData] = useState(defaultForm);
   const [errors, setErrors] = useState({});
+  const [existingCustomers, setExistingCustomers] = useState([]);
+  const [agentsList, setAgentsList] = useState([]);
+
+  useEffect(() => {
+    if (isOpen) {
+      // Load company-scoped customers and agents for referral binding
+      companyAdminService.getCustomers().then(res => {
+        if (res && res.data) setExistingCustomers(res.data);
+      }).catch(() => {});
+
+      companyAdminService.getAgents().then(res => {
+        if (res && res.data) setAgentsList(res.data);
+      }).catch(() => {});
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (lead) {
@@ -345,7 +366,14 @@ export const LeadModal = ({ isOpen, onClose, onSave, lead = null, mode = 'create
                   <select
                     disabled={isView}
                     value={formData.source}
-                    onChange={(e) => setFormData({ ...formData, source: e.target.value })}
+                    onChange={(e) => {
+                      const newSrc = e.target.value;
+                      setFormData(prev => ({
+                        ...prev,
+                        source: newSrc,
+                        ...(newSrc !== 'Referral' ? { referredByCustomerId: '', referredByCustomerName: '', referredByCustomerPhone: '' } : {})
+                      }));
+                    }}
                     className="w-full px-3 py-2 border border-gray-200 rounded-xl outline-none focus:border-[#0F766E] bg-white font-medium"
                   >
                     <option value="Website">Website</option>
@@ -376,31 +404,126 @@ export const LeadModal = ({ isOpen, onClose, onSave, lead = null, mode = 'create
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block font-bold text-gray-700 mb-1">Reference Name</label>
-                  <input
-                    type="text"
-                    disabled={isView}
-                    value={formData.referenceName}
-                    onChange={(e) => setFormData({ ...formData, referenceName: e.target.value })}
-                    placeholder="Referred by existing client or staff..."
-                    className="w-full px-3 py-2 border border-gray-200 rounded-xl outline-none"
-                  />
-                </div>
+              {/* DYNAMIC CUSTOMER REFERRAL BINDING */}
+              {formData.source === 'Referral' && (
+                <div className="p-3.5 bg-teal-50/70 border border-teal-200 rounded-xl space-y-3">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#0F766E]">
+                    <HiOutlineUserGroup className="w-4 h-4" />
+                    <span>Customer Referral Network (Auto Agent Linkage)</span>
+                  </div>
 
-                <div>
-                  <label className="block font-bold text-gray-700 mb-1">Agent / Broker Firm (If applicable)</label>
-                  <input
-                    type="text"
-                    disabled={isView}
-                    value={formData.agentName}
-                    onChange={(e) => setFormData({ ...formData, agentName: e.target.value })}
-                    placeholder="e.g. City Prime Realtors"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-xl outline-none"
-                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <label className="block font-bold text-gray-700 mb-1">Select Referring Customer *</label>
+                      <select
+                        disabled={isView}
+                        value={formData.referredByCustomerId}
+                        onChange={(e) => {
+                          const refId = e.target.value;
+                          const selectedCust = existingCustomers.find(c => String(c._id || c.id) === String(refId));
+                          if (selectedCust) {
+                            setFormData(prev => ({
+                              ...prev,
+                              referredByCustomerId: selectedCust._id || selectedCust.id,
+                              referredByCustomerName: selectedCust.name,
+                              referredByCustomerPhone: selectedCust.phone,
+                              // Auto-inherit parent agent if customer was brought by an agent
+                              ...(selectedCust.agentId ? {
+                                agentId: selectedCust.agentId,
+                                agentName: selectedCust.agentName || prev.agentName
+                              } : {})
+                            }));
+                          } else {
+                            setFormData(prev => ({
+                              ...prev,
+                              referredByCustomerId: '',
+                              referredByCustomerName: '',
+                              referredByCustomerPhone: ''
+                            }));
+                          }
+                        }}
+                        className="w-full px-3 py-2 border border-teal-300 rounded-xl outline-none focus:border-[#0F766E] bg-white font-medium"
+                      >
+                        <option value="">-- Choose Existing Customer --</option>
+                        {existingCustomers.map(c => (
+                          <option key={c._id || c.id} value={c._id || c.id}>
+                            {c.name} ({c.phone}) {c.agentName ? `• Agent: ${c.agentName}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold text-gray-700 mb-1">Assigned Parent Agent (Auto Credited)</label>
+                      <select
+                        disabled={isView}
+                        value={formData.agentId}
+                        onChange={(e) => {
+                          const agId = e.target.value;
+                          const selAg = agentsList.find(a => String(a._id || a.id) === String(agId));
+                          setFormData(prev => ({
+                            ...prev,
+                            agentId: agId,
+                            agentName: selAg ? selAg.fullName || selAg.agencyName : prev.agentName
+                          }));
+                        }}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl outline-none focus:border-[#0F766E] bg-white font-semibold text-[#0F766E]"
+                      >
+                        <option value="">Direct Company (No Agent)</option>
+                        {agentsList.map(a => (
+                          <option key={a._id || a.id} value={a._id || a.id}>
+                            {a.fullName || a.name || 'Agent'} ({a.agentCode || 'CP'}) - Comm: {a.commissionPercentage || '2.0%'}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-[10px] text-gray-500 mt-0.5 block">
+                        * Commission will only be credited to this Agent when booking completes.
+                      </span>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {formData.source !== 'Referral' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-bold text-gray-700 mb-1">Reference Name</label>
+                    <input
+                      type="text"
+                      disabled={isView}
+                      value={formData.referenceName}
+                      onChange={(e) => setFormData({ ...formData, referenceName: e.target.value })}
+                      placeholder="Referred by staff or walk-in..."
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-gray-700 mb-1">Agent / Channel Partner</label>
+                    <select
+                      disabled={isView}
+                      value={formData.agentId}
+                      onChange={(e) => {
+                        const agId = e.target.value;
+                        const selAg = agentsList.find(a => String(a._id || a.id) === String(agId));
+                        setFormData(prev => ({
+                          ...prev,
+                          agentId: agId,
+                          agentName: selAg ? selAg.fullName || selAg.agencyName : ''
+                        }));
+                      }}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl outline-none bg-white font-medium"
+                    >
+                      <option value="">Direct Company (No Agent)</option>
+                      {agentsList.map(a => (
+                        <option key={a._id || a.id} value={a._id || a.id}>
+                          {a.fullName || a.name || 'Agent'} ({a.agentCode || 'CP'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
